@@ -1,17 +1,59 @@
-FROM golang:1.7 AS build
+# default args for x86_64
+ARG ARCH_SRC_DIR=x86_64
+ARG ARCH_GO_IMG=golang:1.9-stretch
+ARG ARCH_HAP_IMG=haproxy:1.7-alpine
+
+# suggested args for arm32:
+# ARCH_SRC_DIR=arm32
+# ARCH_GO_IMG=arm32v7/golang:1.9-stretch
+# ARCH_HAP_IMG=arm32v7/haproxy:1.7 (if arm32v7 adds 1.7-alpine we can use it for consistency)
+# example: docker build --build-arg ARCH_SRC_DIR=arm32 --build-arg ARCH_GO_IMG=arm32v7/golang:1.9-stretch --build-arg ARCH_HAP_IMG=arm32v7/haproxy:1.7 -t docker-flow-proxy:arm32v7 .
+
+# suggested args for arm64:
+# ARCH_SRC_DIR=arm64
+# ARCH_GO_IMG=arm64v8/golang:1.9-stretch
+# ARCH_HAP_IMG=arm64v8/haproxy:1.7-alpine
+# example: docker build --build-arg ARCH_SRC_DIR=arm64 --build-arg ARCH_GO_IMG=arm64v8/golang:1.9-stretch --build-arg ARCH_HAP_IMG=arm64v8/haproxy:1.7-alpine -t docker-flow-proxy:arm64v8 .
+
+FROM monsonnl/qemu-wrap-build-files:latest as arch_src
+
+ARG ARCH_GO_IMG
+
+FROM ${ARCH_GO_IMG} AS build
+
+ARG ARCH_SRC_DIR
+
+COPY --from=arch_src /cross-build/${ARCH_SRC_DIR}/usr/bin /usr/bin
+
+RUN [ "cross-build-start" ]
+
+# build dfp
 ADD . /src
 WORKDIR /src
 RUN go get -d -v -t
 RUN go test --cover ./... --run UnitTest
 RUN go build -v -o docker-flow-proxy
 
+# stage the files and dirs for the build
+RUN mkdir /stage_build
+COPY errorfiles /stage_build/errorfiles
+COPY haproxy.cfg /stage_build/cfg/haproxy.cfg
+COPY haproxy.tmpl /stage_build/cfg/tmpl/haproxy.tmpl
+WORKDIR /stage_build
+RUN mkdir -p ./usr/local/bin && cp /src/docker-flow-proxy ./usr/local/bin/
+RUN chmod +x ./usr/local/bin/docker-flow-proxy
+RUN mkdir ./lib64 && ln -s /lib/libc.musl-x86_64.so.1 ./lib64/ld-linux-x86-64.so.2
+RUN mkdir -p ./cfg/tmpl ./templates ./certs ./logs
+
+RUN [ "cross-build-end" ]
 
 
-FROM haproxy:1.7-alpine
+ARG ARCH_HAP_IMG
+
+FROM ${ARCH_HAP_IMG}
 MAINTAINER 	Viktor Farcic <viktor@farcic.com>
 
-RUN mkdir /lib64 && ln -s /lib/libc.musl-x86_64.so.1 /lib64/ld-linux-x86-64.so.2
-RUN mkdir -p /cfg/tmpl /templates /certs /logs
+COPY --from=build /stage_build/ /
 
 ENV CERTS="" \
     CAPTURE_REQUEST_HEADER="" \
@@ -38,9 +80,3 @@ EXPOSE 443
 EXPOSE 8080
 
 CMD ["docker-flow-proxy", "server"]
-
-COPY errorfiles /errorfiles
-COPY haproxy.cfg /cfg/haproxy.cfg
-COPY haproxy.tmpl /cfg/tmpl/haproxy.tmpl
-COPY --from=build /src/docker-flow-proxy /usr/local/bin/docker-flow-proxy
-RUN chmod +x /usr/local/bin/docker-flow-proxy
