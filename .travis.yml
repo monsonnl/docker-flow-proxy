@@ -1,0 +1,73 @@
+env:
+  global:
+    - VERSION=test-build.${TRAVIS_BUILD_NUMBER}
+    - DOCKER_HUB_USER=monsonnl
+  matrix:
+    - ARCH=x86_64
+      ARCH_GO_IMG=golang:1.9-stretch
+      ARCH_HAP_IMG=haproxy:1.7-alpine
+    - ARCH=arm32v7
+      ARCH_GO_IMG=arm32v7/golang:1.9-stretch
+      ARCH_HAP_IMG=arm32v7/haproxy:1.7
+    - ARCH=arm64v8
+      ARCH_GO_IMG=arm64v8/golang:1.9-stretch
+      ARCH_HAP_IMG=arm64v8/haproxy:1.7-alpine
+
+sudo: required
+
+services:
+  - docker
+
+before_install:
+  # update to the latest docker for multi-stage
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
+  - sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
+  - sudo apt-get update
+  - sudo apt-get -y install docker-ce
+
+#  # extract proxy-key
+#  - if [[ "$TRAVIS_PULL_REQUEST" = "false" ]]; then
+#      openssl aes-256-cbc -K $encrypted_fdd0765d255b_key -iv $encrypted_fdd0765d255b_iv -in proxy-key.enc -out proxy-key -d &&
+#      chmod 600 proxy-key;
+#    fi
+
+script:
+  - docker build --build-arg ARCH_SRC_DIR=${ARCH} --build-arg ARCH_GO_IMG=${ARCH_GO_IMG} --build-arg ARCH_HAP_IMG=${ARCH_HAP_IMG} -t ${DOCKER_HUB_USER}/docker-flow-proxy:beta-${ARCH} .
+  - docker login -u $DOCKER_USERNAME -p $DOCKER_PASSWORD
+  - docker push ${DOCKER_HUB_USER}/docker-flow-proxy:beta-${ARCH}
+
+  # if x86_64 then create the generic tag
+  - if [[ "${ARCH}" = "x86_64" ]]; then
+      docker tag ${DOCKER_HUB_USER}/docker-flow-proxy:beta-x86_64 ${DOCKER_HUB_USER}/docker-flow-proxy:beta &&
+      docker push ${DOCKER_HUB_USER}/docker-flow-proxy:beta;
+    fi
+
+  # create the version and latest tags
+  - if [[ "$TRAVIS_PULL_REQUEST" = "false" ]]; then
+      docker tag ${DOCKER_HUB_USER}/docker-flow-proxy:beta-${ARCH} ${DOCKER_HUB_USER}/docker-flow-proxy:${VERSION}-${ARCH} &&
+      docker push ${DOCKER_HUB_USER}/docker-flow-proxy:${VERSION}-${ARCH} &&
+      docker tag ${DOCKER_HUB_USER}/docker-flow-proxy:${VERSION}-${ARCH} ${DOCKER_HUB_USER}/docker-flow-proxy:latest-${ARCH} &&
+      docker push ${DOCKER_HUB_USER}/docker-flow-proxy:latest-${ARCH};
+    fi
+
+  # again if x86_64 create generic tagging
+  - if [[ "$TRAVIS_PULL_REQUEST" = "false" && "${ARCH}" = "x86_64" ]]; then
+      docker tag ${DOCKER_HUB_USER}/docker-flow-proxy:${VERSION}-${ARCH} ${DOCKER_HUB_USER}/docker-flow-proxy:${VERSION} &&
+      docker push ${DOCKER_HUB_USER}/docker-flow-proxy:${VERSION} &&
+      docker tag ${DOCKER_HUB_USER}/docker-flow-proxy:${VERSION} ${DOCKER_HUB_USER}/docker-flow-proxy:latest &&
+      docker push ${DOCKER_HUB_USER}/docker-flow-proxy:latest;
+    fi
+
+#  # create docs
+#  - if [[ "$TRAVIS_PULL_REQUEST" = "false" ]]; then
+#      docker-compose -f docker-compose-test.yml run --rm docs &&
+#      docker build -t ${DOCKER_HUB_USER}/docker-flow-proxy-docs -f Dockerfile.docs . &&
+#      docker tag ${DOCKER_HUB_USER}/docker-flow-proxy-docs ${DOCKER_HUB_USER}/docker-flow-proxy-docs:${VERSION} &&
+#      docker push ${DOCKER_HUB_USER}/docker-flow-proxy-docs:${VERSION} &&
+#      docker push ${DOCKER_HUB_USER}/docker-flow-proxy-docs;
+#    fi
+
+
+branches:
+  only:
+    - monsonnl-travis
